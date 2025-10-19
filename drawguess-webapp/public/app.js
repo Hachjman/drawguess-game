@@ -20,15 +20,71 @@ document.addEventListener('DOMContentLoaded', () => {
     const refreshRoomsBtn = document.getElementById('refreshRoomsBtn');
     const quickPlayBtn = document.getElementById('quickPlayBtn');
     const createRoomBtn = document.getElementById('createRoomBtn');
+    const joinByCodeBtn = document.getElementById('joinByCodeBtn');
     const createRoomModal = document.getElementById('createRoomModal');
     const createRoomForm = document.getElementById('createRoomForm');
     const closeModalBtn = document.getElementById('closeModalBtn');
     const newRoomIdInput = document.getElementById('newRoomId');
     const newRoomPassInput = document.getElementById('newRoomPass');
+    const newMaxPlayersInput = document.getElementById('newMaxPlayers');
+    const newMaxRoundsInput = document.getElementById('newMaxRounds');
+    const joinRoomModal = document.getElementById('joinRoomModal');
+    const joinRoomForm = document.getElementById('joinRoomForm');
+    const closeJoinModalBtn = document.getElementById('closeJoinModalBtn');
+    const joinRoomIdInput = document.getElementById('joinRoomId');
+    const joinRoomPassInput = document.getElementById('joinRoomPass');
 
     // --- TRẠNG THÁI (STATE) ---
     const avatars = ['😀', '😎', '🤖', '🐱', '🐼', '👾', '🐸', '🦊', '🧑‍🎨', '🧠'];
     let currentAvatarIndex = 0;
+  
+    // Build a cute DiceBear avatar URL (fun-emoji). Falls back to initials if name empty.
+    function buildDiceBearUrl(name, variantIndex) {
+        const seed = `${name || 'Player'}-${variantIndex ?? 0}`;
+        const params = new URLSearchParams({
+            seed,
+            size: '240',
+            // Pixel-art style options
+            backgroundType: 'gradientLinear',
+            // Higher scale gives chunkier pixels visually
+            scale: '100'
+        });
+        // Use pixel-art family to achieve skribbl-like feel
+        return `https://api.dicebear.com/7.x/pixel-art/svg?${params.toString()}`;
+    }
+
+    // Generate a simple initials avatar (local fallback)
+    function generateInitialsAvatar(name) {
+        const initials = (name || '?')
+          .trim()
+          .split(/\s+/)
+          .slice(0,2)
+          .map(s => s[0] || '')
+          .join('')
+          .toUpperCase();
+        // Color based on hash
+        let hash = 0;
+        for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+        const hue = Math.abs(hash) % 360;
+        const bg = `hsl(${hue}, 60%, 28%)`;
+        const border = `hsla(${hue}, 65%, 50%, .35)`;
+        const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240' viewBox='0 0 240 240'>
+  <defs>
+    <filter id='s' x='-20%' y='-20%' width='140%' height='140%'>
+      <feDropShadow dx='0' dy='6' stdDeviation='8' flood-color='rgba(0,0,0,0.35)'/>
+    </filter>
+  </defs>
+  <rect x='0' y='0' width='240' height='240' rx='24' fill='${bg}' stroke='${border}' stroke-width='3' filter='url(#s)'/>
+  <text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-size='96' font-family='Nunito, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif' fill='white' font-weight='800'>${initials}</text>
+  <circle cx='200' cy='40' r='6' fill='rgba(255,255,255,.25)'/>
+  <circle cx='30' cy='210' r='4' fill='rgba(255,255,255,.18)'/>
+  <circle cx='210' cy='200' r='3' fill='rgba(255,255,255,.15)'/>
+  <circle cx='20' cy='30' r='3' fill='rgba(255,255,255,.12)'/>
+  <rect x='14' y='14' width='212' height='212' rx='20' fill='none' stroke='rgba(255,255,255,.08)'/>
+</svg>`;
+        return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+    }
     
     // --- XỬ LÝ SỰ KIỆN SOCKET ---
     socket.on('connect', () => {
@@ -109,7 +165,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const newRoomId = newRoomIdInput.value.trim();
         const newRoomPass = newRoomPassInput.value.trim();
-        
+        const maxPlayersVal = parseInt((newMaxPlayersInput && newMaxPlayersInput.value) || '0', 10);
+        const maxRoundsVal = parseInt((newMaxRoundsInput && newMaxRoundsInput.value) || '0', 10);
+
         if (!newRoomId) {
             alert('Please enter a room name.');
             return;
@@ -128,7 +186,9 @@ document.addEventListener('DOMContentLoaded', () => {
             playerName: playerData.name,
             playerAvatar: playerData.avatar,
             roomId: newRoomId,
-            password: newRoomPass
+            password: newRoomPass,
+            maxPlayers: Number.isFinite(maxPlayersVal) && maxPlayersVal >= 2 ? maxPlayersVal : undefined,
+            maxRounds: Number.isFinite(maxRoundsVal) && maxRoundsVal >= 1 ? maxRoundsVal : undefined
         }, (response) => {
             console.log('=== CREATE ROOM RESPONSE ===');
             console.log('response:', response);
@@ -168,15 +228,25 @@ document.addEventListener('DOMContentLoaded', () => {
             return false;
         }
         localStorage.setItem('dg:name', name);
-        localStorage.setItem('dg:avatar', avatars[currentAvatarIndex]); // Luôn lưu avatar hiện tại
+        // Save cute DiceBear avatar URL; fallback to initials on failure paths
+        const url = buildDiceBearUrl(name, currentAvatarIndex);
+        localStorage.setItem('dg:avatarUrl', url);
+        localStorage.setItem('dg:avatar', avatars[currentAvatarIndex]); // keep legacy value for fallback
         console.log('✅ Player info saved to localStorage');
         console.log('Saved name:', localStorage.getItem('dg:name'));
-        console.log('Saved avatar:', localStorage.getItem('dg:avatar'));
+        console.log('Saved avatarUrl:', localStorage.getItem('dg:avatarUrl'));
         return true;
     }
 
     function renderAvatar() {
-        avatarDisplay.textContent = avatars[currentAvatarIndex];
+        const name = playerNameInput.value.trim();
+        const url = buildDiceBearUrl(name || 'Player', currentAvatarIndex);
+        localStorage.setItem('dg:avatarUrl', url);
+        avatarDisplay.innerHTML = '';
+        const img = document.createElement('img');
+        img.src = url;
+        img.alt = 'Avatar';
+        avatarDisplay.appendChild(img);
     }
     
     function restorePlayerInfo() {
@@ -184,40 +254,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (savedName) {
             playerNameInput.value = savedName;
         }
-        const savedAvatar = localStorage.getItem('dg:avatar');
-        if (savedAvatar) {
-            const idx = avatars.indexOf(savedAvatar);
-            if (idx !== -1) {
-                currentAvatarIndex = idx;
-            }
-        }
+        // Always regenerate initials avatar for current name
         renderAvatar();
     }
-
-    // --- GẮN CÁC SỰ KIỆN VÀO GIAO DIỆN ---
-    prevAvatarBtn.addEventListener('click', () => {
-        currentAvatarIndex = (currentAvatarIndex - 1 + avatars.length) % avatars.length;
-        renderAvatar();
-    });
-
-    nextAvatarBtn.addEventListener('click', () => {
-        currentAvatarIndex = (currentAvatarIndex + 1) % avatars.length;
-        renderAvatar();
-    });
-
-    // --- XỬ LÝ SỰ KIỆN SOCKET ---
-    socket.on('connect_error', (err) => {
-        console.error('❌ Connection error:', err);
-        roomListEl.innerHTML = '<div class="room-item-placeholder" style="color: #e74c3c; font-weight: bold;">Could not connect to the server. Please check the address and refresh.</div>';
-    });
-
-    socket.on('disconnect', (reason) => {
-        console.warn('⚠️ Disconnected from server:', reason);
-    });
-
-    socket.on('room-list-update', (rooms) => {
-        renderRoomList(rooms);
-    });
 
     function openCreateRoomModal() {
         const name = playerNameInput.value.trim();
@@ -231,6 +270,37 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function closeCreateRoomModal() {
         createRoomModal.classList.add('hidden');
+    }
+
+    function openJoinRoomModal() {
+        const name = playerNameInput.value.trim();
+        if (!name) {
+            alert('Please enter your name first!');
+            playerNameInput.focus();
+            return;
+        }
+        joinRoomModal.classList.remove('hidden');
+        setTimeout(() => joinRoomIdInput && joinRoomIdInput.focus(), 0);
+    }
+
+    function closeJoinRoomModal() {
+        joinRoomModal.classList.add('hidden');
+    }
+
+    function handleJoinByCode(e) {
+        e.preventDefault();
+        if (!validateAndSavePlayerInfo()) return;
+        const rawCode = (joinRoomIdInput.value || '').trim();
+        if (!rawCode) {
+            alert('Please enter a room code.');
+            joinRoomIdInput.focus();
+            return;
+        }
+        const roomCode = rawCode.toUpperCase();
+        const pass = (joinRoomPassInput.value || '').trim();
+        localStorage.setItem('dg:roomPassword', pass);
+        const gameUrl = `game?room=${encodeURIComponent(roomCode)}`;
+        window.location.href = gameUrl;
     }
 
     function handleQuickPlay() {
@@ -261,11 +331,25 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // --- GẮN CÁC SỰ KIỆN VÀO GIAO DIỆN ---
+    prevAvatarBtn.addEventListener('click', () => {
+        currentAvatarIndex = (currentAvatarIndex - 1 + avatars.length) % avatars.length;
+        renderAvatar();
+    });
+
+    nextAvatarBtn.addEventListener('click', () => {
+        currentAvatarIndex = (currentAvatarIndex + 1) % avatars.length;
+        renderAvatar();
+    });
+
     refreshRoomsBtn.addEventListener('click', requestRoomList);
     quickPlayBtn.addEventListener('click', handleQuickPlay);
     createRoomBtn.addEventListener('click', openCreateRoomModal);
     closeModalBtn.addEventListener('click', closeCreateRoomModal);
     createRoomForm.addEventListener('submit', handleCreateRoom);
+    if (joinByCodeBtn) joinByCodeBtn.addEventListener('click', openJoinRoomModal);
+    if (closeJoinModalBtn) closeJoinModalBtn.addEventListener('click', closeJoinRoomModal);
+    if (joinRoomForm) joinRoomForm.addEventListener('submit', handleJoinByCode);
 
     // --- KHỞI TẠO ---
     restorePlayerInfo();

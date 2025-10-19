@@ -9,6 +9,15 @@ const players = new Map();
 
 module.exports = function(gameNamespace) {
   
+  // Determine recommended number of rounds based on player count
+  function getRecommendedRounds(playerCount){
+    if (playerCount <= 1) return 1;
+    if (playerCount === 2) return 3;
+    if (playerCount === 3) return 4;
+    if (playerCount === 4) return 5;
+    return 6; // 5 or more players
+  }
+  
   /**
    * Gửi danh sách phòng đã cập nhật đến tất cả client trong lobby.
    */
@@ -71,7 +80,9 @@ module.exports = function(gameNamespace) {
         const newRoom = new GameRoom(roomCode, broadcast, {
             roomType: 'public',
             createdBy: playerName,
-            maxPlayers: 8,
+            maxPlayers: 5, // Quick play has max 5 players
+            maxRounds: 3,  // Start with 3 rounds, will adjust based on player count
+            roundTime: 60  // 60 seconds per round
         });
         rooms.set(roomCode, newRoom);
         
@@ -115,8 +126,8 @@ module.exports = function(gameNamespace) {
             roomType: roomType || 'custom',
             customName: customName || null,
             createdBy: playerName,
-            maxPlayers: maxPlayers || 8,
-            maxRounds: maxRounds || config.MAX_ROUNDS,
+            maxPlayers: Math.min(maxPlayers || 8, 8), // Cap at 8 players for custom rooms
+            maxRounds: maxRounds || 3, // Default to 3 rounds, will adjust based on player count
             roundTime: roundTime || config.ROUND_TIME,
         });
         rooms.set(finalRoomId, newRoom);
@@ -158,28 +169,62 @@ module.exports = function(gameNamespace) {
         }
         
         if (!room.canJoin()) {
-            console.log('❌ Join failed: Room is full or game already started');
-            return socket.emit('join-error', { message: `Cannot join room '${roomId}'. Game already started or room is full.` });
+            console.log('❌ Join failed: Room is full');
+            return socket.emit('join-error', { message: `Room '${roomId}' is full.` });
         }
         
         console.log('✅ Player validation passed');
         const player = { id: socket.id, name: playerName, avatar: playerAvatar, roomId, events: [] };
-        players.set(socket.id, player);
-        room.addPlayer(player);
+        const isNewPlayer = !players.has(socket.id);
+        
+        if (isNewPlayer) {
+            players.set(socket.id, player);
+            room.players.push(player);
+            room.scores.set(socket.id, 0);
+            
+            // If this is the first player joining, set initial player count
+            if (room.players.length === 1) {
+                room.initialPlayerCount = 1;
+            }
+            
+            // If game has already started, adjust max rounds based on current player count
+            if (room.isGameStarted) {
+                const recommendedRounds = getRecommendedRounds(room.players.length);
+                if (recommendedRounds > room.initialMaxRounds) {
+                    room.maxRounds = recommendedRounds;
+                    console.log(`[DYNAMIC ROUNDS] Increased maxRounds to ${room.maxRounds} for ${room.players.length} players`);
+                }
+            }
+        }
+        
         socket.join(roomId);
         console.log(`✅ Player '${playerName}' joined room '${roomId}'`);
         console.log('Room now has', room.players.length, 'players');
 
-        socket.emit('game-state', room.getState());
-        socket.to(roomId).emit('player-joined', {
-            player: { id: player.id, name: player.name, avatar: player.avatar, score: 0 },
-            players: room.getState().players
+        // Send current game state to the joining player
+        socket.emit('game-state', {
+            ...room.getState(),
+            isNewPlayer: isNewPlayer,
+            currentWord: room.currentWord ? room.currentWord : null,
+            timeLeft: room.timeLeft,
+            isDrawer: room.currentDrawerId === socket.id
         });
+        
+        // Notify other players about the new player
+        if (isNewPlayer) {
+            socket.to(roomId).emit('player-joined', {
+                player: { id: player.id, name: player.name, avatar: player.avatar, score: 0 },
+                players: room.getState().players
+            });
+        }
         
         broadcastRoomListUpdate();
 
-        if (room.players.length >= 2 && !room.currentWord) {
-            console.log('🎮 Starting new round (2+ players)');
+        // Start new round if not already started and we have enough players
+        if (!room.isGameStarted && room.players.length >= 2) {
+            console.log('🎮 Starting new game (2+ players)');
+            room.isGameStarted = true;
+            room.initialPlayerCount = room.players.length;
             startNewRound(room);
         }
         console.log('=== [SERVER] JOIN-GAME COMPLETE ===\n');
@@ -311,6 +356,19 @@ module.exports = function(gameNamespace) {
         console.log('Round:', room.round);
         console.log('Current drawer ID:', room.currentDrawerId);
         
+        // Set drawer if not set (for new games)
+        if (!room.currentDrawerId && room.players.length > 0) {
+            room.currentDrawerId = room.players[0].id;
+        }
+        
+        // Update max rounds based on current player count
+        const recommended = getRecommendedRounds(room.players.length);
+        if (recommended > room.initialMaxRounds) {
+            room.initialMaxRounds = recommended;
+            room.maxRounds = recommended;
+            console.log(`[DYNAMIC ROUNDS] Updated maxRounds to ${room.maxRounds} (players: ${room.players.length})`);
+        }
+
         room.currentWord = null;
         room.isGameStarted = true; // Lock room khi game bắt đầu
         console.log('✅ Reset currentWord to null, game started');
@@ -328,6 +386,18 @@ module.exports = function(gameNamespace) {
             console.log('📝 Sending word choices to drawer:', words);
             drawerSocket.emit('choose-word', { words });
             console.log('✅ choose-word event emitted to socket:', drawerId);
+            // Auto-pick a word after 10s if drawer doesn't choose
+            room.clearWordSelectTimer();
+            room.wordSelectTimer = setTimeout(() => {
+                if (!room.currentWord) {
+                    const autoWord = words[Math.floor(Math.random() * words.length)];
+                    console.log(`[AUTO-PICK] Drawer did not choose in time. Auto-selecting: ${autoWord}`);
+                    room.currentWord = autoWord;
+                    const hint = autoWord.replace(/\S/g, '_');
+                    gameNamespace.to(room.roomId).emit('word-hint', { hint, length: autoWord.length });
+                    room.startTimer(() => handleRoundEnd(room));
+                }
+            }, 10000);
         } else {
             console.log('❌ Drawer socket not found! ID:', drawerId);
             console.log('Available socket IDs:', Array.from(gameNamespace.sockets.keys()));
@@ -336,7 +406,8 @@ module.exports = function(gameNamespace) {
         console.log('📢 Broadcasting next-round event...');
         room.broadcast('next-round', {
             round: room.round,
-            currentDrawer: drawerId
+            currentDrawer: drawerId,
+            maxRounds: room.maxRounds
         });
         console.log('=== [SERVER] START NEW ROUND COMPLETE ===\n');
     }
@@ -361,9 +432,22 @@ module.exports = function(gameNamespace) {
         
         if (room.round > room.maxRounds) {
             console.log('🎉 Game over! Max rounds reached.');
-            room.broadcast('game-over', { scores: room.getState().players });
-            rooms.delete(room.roomId);
-            broadcastRoomListUpdate();
+            // Compute winner
+            const standings = room.getState().players.sort((a,b)=> (b.score||0)-(a.score||0));
+            const winner = standings[0] || null;
+            room.broadcast('game-over', { standings, winner });
+            // Reset after short delay and optionally auto-restart
+            console.log('🔄 Resetting room in 5s...');
+            setTimeout(() => {
+                room.resetGame();
+                if (room.players.length >= 2) {
+                    console.log('🚀 Auto-restart game after reset');
+                    startNewRound(room);
+                } else {
+                    console.log('⌛ Waiting for more players to start');
+                }
+                broadcastRoomListUpdate();
+            }, 5000);
         } else {
             console.log('🔄 Moving to next drawer...');
             room.nextDrawer();

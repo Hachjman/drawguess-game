@@ -11,6 +11,10 @@
   </head>
   <body>
     <div class="bg-pattern"></div>
+    <!-- Animated doodle background -->
+    <div class="bg-doodles layer1" aria-hidden="true"></div>
+    <div class="bg-doodles layer2" aria-hidden="true"></div>
+    <div class="bg-doodles layer3" aria-hidden="true"></div>
 
     <main class="container">
       <h1 class="logo" aria-label="DrawGuess">draw<span>guess</span>.io</h1>
@@ -50,6 +54,7 @@
         </div>
         <div class="lobby-actions">
             <button type="button" id="refreshRoomsBtn" class="btn btn-secondary">Refresh</button>
+            <button type="button" id="joinByCodeBtn" class="btn btn-secondary">Join by Code</button>
             <button type="button" id="createRoomBtn" class="btn btn-play">Create Custom Room</button>
         </div>
       </section>
@@ -68,9 +73,38 @@
                     <label for="newRoomPass">Password (optional)</label>
                     <input id="newRoomPass" name="newRoomPass" type="password" placeholder="e.g., 1234" />
                 </div>
+                <div class="form-group">
+                    <label for="newMaxPlayers">Max Players</label>
+                    <input id="newMaxPlayers" name="newMaxPlayers" type="number" min="2" max="12" value="8" />
+                </div>
+                <div class="form-group">
+                    <label for="newMaxRounds">Max Rounds</label>
+                    <input id="newMaxRounds" name="newMaxRounds" type="number" min="1" max="12" value="6" />
+                </div>
                 <div class="form-actions">
                     <button type="submit" class="btn btn-play">Create</button>
                     <button type="button" id="closeModalBtn" class="btn btn-secondary">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Join Room Modal -->
+    <div id="joinRoomModal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <h2 class="modal-title">Join a Room</h2>
+            <form id="joinRoomForm">
+                <div class="form-group">
+                    <label for="joinRoomId">Room Code</label>
+                    <input id="joinRoomId" name="joinRoomId" placeholder="e.g., ABC123" required maxlength="10" />
+                </div>
+                <div class="form-group">
+                    <label for="joinRoomPass">Password (optional)</label>
+                    <input id="joinRoomPass" name="joinRoomPass" type="password" placeholder="••••" />
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-play">Join</button>
+                    <button type="button" id="closeJoinModalBtn" class="btn btn-secondary">Cancel</button>
                 </div>
             </form>
         </div>

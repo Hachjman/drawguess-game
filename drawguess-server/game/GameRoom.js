@@ -14,9 +14,11 @@ class GameRoom {
     this.createdAt = Date.now();
     
     // Game settings
-    this.maxPlayers = options.maxPlayers || 8;
+    this.maxPlayers = options.roomType === 'public' ? 5 : (options.maxPlayers || 8); // 5 for quick play, 8 for custom
     this.maxRounds = options.maxRounds || config.MAX_ROUNDS;
+    this.initialMaxRounds = this.maxRounds; // Store initial max rounds
     this.roundTime = options.roundTime || config.ROUND_TIME;
+    this.initialPlayerCount = 0; // Track initial player count
     
     // Game state
     this.players = [];
@@ -26,6 +28,7 @@ class GameRoom {
     this.round = 1;
     this.timeLeft = this.roundTime;
     this.timer = null;
+    this.wordSelectTimer = null; // timer for drawer to choose a word
     this.isGameStarted = false;
   }
 
@@ -84,6 +87,27 @@ class GameRoom {
     }
   }
 
+  clearWordSelectTimer() {
+    if (this.wordSelectTimer) {
+      clearTimeout(this.wordSelectTimer);
+      this.wordSelectTimer = null;
+    }
+  }
+
+  resetGame() {
+    this.stopTimer();
+    this.clearWordSelectTimer();
+    // Reset scores but keep players in room
+    this.scores = new Map(this.players.map(p => [p.id, 0]));
+    // Reset round and word state
+    this.round = 1;
+    this.currentWord = null;
+    this.timeLeft = this.roundTime;
+    this.isGameStarted = false;
+    // Reset drawer to first player if available
+    this.currentDrawerId = this.players.length > 0 ? this.players[0].id : null;
+  }
+
   getState() {
     return {
       players: this.players.map(p => ({
@@ -113,8 +137,8 @@ class GameRoom {
   }
   
   canJoin() {
-    // Không cho join nếu game đã bắt đầu hoặc phòng đầy
-    return !this.isGameStarted && this.players.length < this.maxPlayers;
+    // Allow joining even if game has started, but not if room is full
+    return this.players.length < this.maxPlayers;
   }
 
   isValidPassword(password) {

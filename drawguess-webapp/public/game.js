@@ -58,7 +58,8 @@
   // Game state
   console.log('\n=== [GAME.JS] LOADING GAME STATE ===');
   const playerName = localStorage.getItem('dg:name') || 'Player';
-  const playerAvatar = localStorage.getItem('dg:avatar') || '😀';
+  const savedAvatarUrl = localStorage.getItem('dg:avatarUrl');
+  const playerAvatar = savedAvatarUrl || localStorage.getItem('dg:avatar') || '😀';
   console.log('Player name from localStorage:', playerName);
   console.log('Player avatar from localStorage:', playerAvatar);
   let myPlayerId = null;
@@ -87,6 +88,12 @@
   const shareRoomBtn = document.getElementById('shareRoomBtn');
   const playersPanel = document.querySelector('.players-panel');
   const debugWordBtn = document.getElementById('debugWordBtn');
+  const podiumModal = document.getElementById('podiumModal');
+  const podiumEls = {
+    first: { avatar: document.getElementById('p1Avatar'), name: document.getElementById('p1Name'), score: document.getElementById('p1Score') },
+    second: { avatar: document.getElementById('p2Avatar'), name: document.getElementById('p2Name'), score: document.getElementById('p2Score') },
+    third: { avatar: document.getElementById('p3Avatar'), name: document.getElementById('p3Name'), score: document.getElementById('p3Score') },
+  };
 
   // Drawing state
   let isDrawing = false;
@@ -194,16 +201,14 @@
   });
 
   socket.on('next-round', (data) => {
-    console.log('=== [CLIENT] NEXT-ROUND EVENT ===');
-    console.log('Round:', data.round);
-    console.log('New drawer ID:', data.currentDrawer);
-    console.log('My player ID:', myPlayerId);
-    
+    console.log('\n=== [CLIENT] NEXT-ROUND ===');
+    console.log('Data:', data);
     currentDrawerId = data.currentDrawer;
-    isDrawer = (currentDrawerId === myPlayerId);
-    console.log('Am I the drawer?', isDrawer);
-    
+    isDrawer = (myPlayerId === currentDrawerId);
     roundEl.textContent = data.round;
+    if (typeof data.maxRounds === 'number') {
+      totalRoundsEl.textContent = data.maxRounds;
+    }
     
     clearCanvas();
     wordHint.textContent = 'GUESS THIS: _ _ _ _ _';
@@ -213,6 +218,8 @@
     
     addSystemMessage(`🎮 Round ${data.round} has started!`);
     console.log('=== [CLIENT] NEXT-ROUND COMPLETE ===\n');
+    // Hide podium if visible
+    if (podiumModal) podiumModal.classList.add('hidden');
   });
 
   socket.on('timer-update', (data) => {
@@ -230,8 +237,32 @@
   });
 
   socket.on('game-over', (data) => {
-    addSystemMessage('🎉 Game Over! Thanks for playing! 🎉');
-    // TODO: Hiển thị bảng xếp hạng cuối cùng
+    addSystemMessage('🎉 Game Over!');
+    if (!podiumModal) return;
+    const standings = Array.isArray(data?.standings) ? data.standings : [];
+    // Helper to fill a slot
+    function fill(slot, player){
+      if (!podiumEls[slot]) return;
+      const el = podiumEls[slot];
+      if (player){
+        const isImg = typeof player.avatar === 'string' && (player.avatar.startsWith('http') || player.avatar.startsWith('data:image'));
+        if (isImg) {
+          el.avatar.innerHTML = `<img src="${player.avatar}" alt="avatar"/>`;
+        } else {
+          el.avatar.textContent = player.avatar || '🙂';
+        }
+        el.name.textContent = player.name || 'Player';
+        el.score.textContent = `${player.score || 0} pts`;
+      } else {
+        el.avatar.textContent = '—';
+        el.name.textContent = '—';
+        el.score.textContent = '';
+      }
+    }
+    fill('first', standings[0]);
+    fill('second', standings[1]);
+    fill('third', standings[2]);
+    podiumModal.classList.remove('hidden');
   });
 
   socket.on('draw', (data) => {
@@ -453,9 +484,11 @@
       const div = document.createElement('div');
       div.className = 'player-item';
       if (player.id === currentDrawerId) div.classList.add('active');
+      const isImg = typeof player.avatar === 'string' && (player.avatar.startsWith('http') || player.avatar.startsWith('data:image'));
+      const avatarHtml = isImg ? `<img src="${player.avatar}" alt="avatar"/>` : `${player.avatar || '🙂'}`;
       div.innerHTML = `
         <span class="rank">#${idx + 1}</span>
-        <span class="player-avatar">${player.avatar}</span>
+        <span class="player-avatar">${avatarHtml}</span>
         <span class="player-name">${player.name}${player.id === myPlayerId ? ' (You)' : ''}</span>
         <span class="player-score">${player.score || 0} pts</span>
       `;
